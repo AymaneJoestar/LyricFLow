@@ -1,0 +1,7 @@
+{
+  "name": "LyricFlow AI",
+  "description": "An intelligent AI agent that generates creative song lyrics based on mood, genre, and topics. Features structured verse/chorus generation and style customization.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
