@@ -17,6 +17,7 @@ import { Avatar } from './components/Avatar';
 import { AdBanner } from './components/AdBanner';
 import { CommunityPage } from './components/CommunityPage';
 import { PublicProfilePage } from './components/PublicProfilePage';
+import { SharePrompt } from './components/SharePrompt';
 
 type ViewState = 'landing' | 'form-standard' | 'form-inspiration' | 'result' | 'auth' | 'profile' | 'community' | 'community-song' | 'public-profile';
 
@@ -28,6 +29,7 @@ const App: React.FC = () => {
   const [isSaved, setIsSaved] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [showUpgrade, setShowUpgrade] = useState(false);
+  const [showSharePrompt, setShowSharePrompt] = useState(false);
   const [communitySong, setCommunitySong] = useState<SavedSong | null>(null);
   const [viewingUserId, setViewingUserId] = useState<string | null>(null);
 
@@ -62,7 +64,10 @@ const App: React.FC = () => {
     try {
       const data = await generateSongLyrics(input);
       setState({ isLoading: false, error: null, data });
+      console.log("Generating success, triggering share prompt...");
       setView('result');
+      setShowSharePrompt(true); // Trigger share prompt
+      console.log("showSharePrompt set to true");
 
       // Feedback Trigger: 100% chance if feedback not given yet (Delayed by 15s)
       const hasGivenFeedback = localStorage.getItem('lyricflow_feedback_given');
@@ -98,6 +103,38 @@ const App: React.FC = () => {
       alert(`Successfully upgraded to ${tier} tier!`);
     } catch (e) {
       alert('Upgrade failed. Please try again.');
+    }
+  };
+
+  const handleConfirmShare = async () => {
+    if (!user || !state.data) return;
+
+    try {
+      // 1. Save if not saved
+      let songId = (state.data as any).id || (state.data as any)._id;
+      if (!songId) {
+        const savedSong = await dbService.saveSong(user.id, state.data);
+        songId = savedSong.id || (savedSong as any)._id;
+        // Update local state with new ID
+        setState(prev => ({ ...prev, data: { ...prev.data!, ...savedSong } }));
+        setIsSaved(true);
+        // Refresh check status
+        checkStatus();
+      }
+
+      // 2. Make Public
+      await dbService.toggleShare(songId, true);
+
+      // Update local state to show it is public
+      setState(prev => prev.data ? ({ ...prev, data: { ...prev.data, isPublic: true } }) : prev);
+
+      // Close prompt and notify
+      setShowSharePrompt(false);
+      alert("Success! Your song is now live in the community 🎉");
+
+    } catch (e) {
+      console.error("Share failed", e);
+      alert("Failed to share song. Please accept the save prompt first if one appears.");
     }
   };
 
@@ -345,6 +382,15 @@ const App: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Share Prompt - Rendered at root level for z-index safety */}
+      {showSharePrompt && state.data && (
+        <SharePrompt
+          songTitle={state.data.title}
+          onShare={handleConfirmShare}
+          onClose={() => { console.log("Share prompt closed"); setShowSharePrompt(false); }}
+        />
+      )}
     </div>
   );
 };
