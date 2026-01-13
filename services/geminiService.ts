@@ -2,10 +2,10 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { GenerationInput, SongLyrics } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
 
 export const generateSongLyrics = async (input: GenerationInput): Promise<SongLyrics> => {
-  const modelId = "gemini-3-flash-preview"; 
+  const modelId = "gemini-3-flash-preview";
 
   let specificPrompt = '';
   if (input.mode === 'standard') {

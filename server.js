@@ -65,13 +65,21 @@ async function connectDB() {
 connectDB();
 
 // --- SCHEMAS ---
-const User = mongoose.model('User', new mongoose.Schema({
+const userSchema = new mongoose.Schema({
   username: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
-  tier: { type: String, enum: ['free', 'pro'], default: 'free' },
+  tier: {
+    type: String,
+    enum: ['free', 'pro'],
+    default: 'free',
+    set: (v) => v ? v.toLowerCase() : v // Normalize to lowercase
+  },
+  avatarUrl: { type: String, default: null },  // NEW: Profile picture
   createdAt: { type: Date, default: Date.now }
-}));
+});
+
+const User = mongoose.model('User', userSchema);
 
 const Song = mongoose.model('Song', new mongoose.Schema({
   userId: { type: String, required: true },
@@ -94,7 +102,9 @@ const Song = mongoose.model('Song', new mongoose.Schema({
     userId: String,
     username: String,
     content: String,
-    createdAt: { type: Date, default: Date.now }
+    createdAt: { type: Date, default: Date.now },
+    parentCommentId: { type: String, default: null },
+    avatarUrl: String  // NEW: Store avatar snapshot
   }]
 }));
 
@@ -217,14 +227,16 @@ app.get('/api/songs/:userId', async (req, res) => {
 app.put('/api/users/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-    const { currentPassword, newEmail, newPassword } = req.body;
+    const { currentPassword, newEmail, newPassword, avatarUrl } = req.body;
 
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: 'User not found' });
 
-    // Security check: Verify current password
-    if (user.password !== currentPassword) {
-      return res.status(401).json({ message: 'Incorrect current password' });
+    // Security check: Verify current password ONLY when changing email/password
+    if (newEmail || newPassword) {
+      if (!currentPassword || user.password !== currentPassword) {
+        return res.status(401).json({ message: 'Incorrect current password' });
+      }
     }
 
     // Update fields
@@ -241,8 +253,46 @@ app.put('/api/users/:userId', async (req, res) => {
       user.password = newPassword;
     }
 
+    if (avatarUrl !== undefined) {
+      user.avatarUrl = avatarUrl; // Allow null/empty to remove avatar
+    }
+
     await user.save();
-    res.json({ id: user._id, username: user.username, email: user.email, tier: user.tier });
+    res.json({ id: user._id, username: user.username, email: user.email, tier: user.tier, avatarUrl: user.avatarUrl });
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+// Get Public User Profile
+app.get('/api/users/:userId/profile', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // Get stats
+    const publicSongs = await Song.countDocuments({ userId, isPublic: true });
+    const allUserSongs = await Song.find({ userId });
+    const totalComments = allUserSongs.reduce((sum, song) => sum + (song.comments?.length || 0), 0);
+
+    res.json({
+      id: user._id,
+      username: user.username,
+      avatarUrl: user.avatarUrl,
+      createdAt: user.createdAt,
+      stats: {
+        publicSongs,
+        totalComments
+      }
+    });
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+// Get User's Public Songs
+app.get('/api/users/:userId/public-songs', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const songs = await Song.find({ userId, isPublic: true }).sort({ createdAt: -1 });
+    res.json(songs);
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
@@ -285,11 +335,10 @@ app.get('/api/public/songs', async (req, res) => {
 app.put('/api/songs/:id/share', async (req, res) => {
   try {
     const { isPublic } = req.body;
-    const song = await Song.findByIdAndUpdate(
-      req.params.id,
-      { isPublic },
-      { new: true }
-    );
+    const song = await Song.findById(req.params.id);
+    if (!song) return res.status(404).json({ message: 'Song not found' });
+    song.isPublic = isPublic;
+    await song.save();
     res.json(song);
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
@@ -297,12 +346,50 @@ app.put('/api/songs/:id/share', async (req, res) => {
 // Add Comment
 app.post('/api/songs/:id/comment', async (req, res) => {
   try {
-    const { userId, username, content } = req.body;
+    const { userId, username, content, parentCommentId } = req.body;
     const song = await Song.findById(req.params.id);
     if (!song) return res.status(404).json({ message: 'Song not found' });
 
-    song.comments.push({ userId, username, content });
+    const user = await User.findById(userId); // Fetch user for avatar
+
+    const comment = {
+      userId,
+      username,
+      content,
+      createdAt: new Date(),
+      parentCommentId: parentCommentId || null,
+      avatarUrl: user ? user.avatarUrl : null
+    };
+
+    song.comments.push(comment);
     await song.save();
+    res.json(song);
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+// Delete Comment
+app.delete('/api/songs/:id/comment/:commentId', async (req, res) => {
+  try {
+    const { userId } = req.body; // Verify ownership
+    const { id, commentId } = req.params;
+
+    const song = await Song.findById(id);
+    if (!song) return res.status(404).json({ message: 'Song not found' });
+
+    // Find comment
+    const comment = song.comments.id(commentId);
+    if (!comment) return res.status(404).json({ message: 'Comment not found' });
+
+    // Verify ownership
+    if (comment.userId !== userId) {
+      return res.status(403).json({ message: 'Unauthorized' });
+    }
+
+    // Remove comment
+    // using pull to remove subdoc
+    song.comments.pull(commentId);
+    await song.save();
+
     res.json(song);
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
@@ -329,6 +416,66 @@ app.post('/api/songs/:id/rate', async (req, res) => {
     await song.save();
     res.json(song);
   } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+
+// --- IMAGE GENERATION VIA HUGGING FACE (FREE TIER) ---
+app.post('/api/generate-cover-art', async (req, res) => {
+  try {
+    const { prompt } = req.body;
+    const HF_API_TOKEN = process.env.HUGGINGFACE_API_TOKEN;
+
+    if (!HF_API_TOKEN) {
+      return res.status(500).json({
+        message: 'Hugging Face API token not configured on server. Please add HUGGINGFACE_API_TOKEN to .env.local'
+      });
+    }
+
+    // Use Stable Diffusion XL via Hugging Face Inference API
+    const response = await fetch(
+      'https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-xl-base-1.0',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${HF_API_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          inputs: prompt,
+          parameters: {
+            num_inference_steps: 30,
+            guidance_scale: 7.5,
+          }
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Hugging Face API error:', errorText);
+
+      // Check if model is loading
+      if (response.status === 503) {
+        return res.status(503).json({
+          message: 'Model is loading, please try again in 20-30 seconds'
+        });
+      }
+
+      return res.status(response.status).json({
+        message: `Hugging Face API error: ${errorText}`
+      });
+    }
+
+    // Response is an image blob
+    const imageBuffer = await response.arrayBuffer();
+    const base64Image = Buffer.from(imageBuffer).toString('base64');
+    const imageUrl = `data:image/png;base64,${base64Image}`;
+
+    res.json({ imageUrl });
+  } catch (err) {
+    console.error('Hugging Face API error:', err);
+    res.status(500).json({ message: err.message || 'Failed to generate image' });
+  }
 });
 
 // --- PRODUCTION: SERVE FRONTEND ---

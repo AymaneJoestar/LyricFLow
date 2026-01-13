@@ -1,5 +1,5 @@
 
-import { SavedSong, SongLyrics, User } from "../types";
+import { SavedSong, SongLyrics, User, UserProfile } from "../types";
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 const CURRENT_USER_KEY = 'lyricflow_current_user';
@@ -56,11 +56,21 @@ export const dbService = {
   },
 
   login: async (email: string, password: string): Promise<User> => {
-    const apiCall = () => fetch(`${API_URL}/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    });
+    const apiCall = async () => {
+      const response = await fetch(`${API_URL}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Login failed');
+      }
+      const user = await response.json();
+      // Save to localStorage for session persistence
+      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
+      return user;
+    };
     const fallback = async () => {
       const users = JSON.parse(localStorage.getItem(LOCAL_USERS_KEY) || '[]');
       const user = users.find((u: any) => u.email === email && u.password === password);
@@ -68,7 +78,12 @@ export const dbService = {
       localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
       return user;
     };
-    return fetchWithFallback(apiCall, fallback);
+    try {
+      return await apiCall();
+    } catch (error: any) {
+      console.warn("Backend unavailable, using fallback:", error.message);
+      return fallback();
+    }
   },
 
   logout: () => localStorage.removeItem(CURRENT_USER_KEY),
@@ -140,33 +155,43 @@ export const dbService = {
     return fetchWithFallback(apiCall, fallback);
   },
 
-  updateProfile: async (userId: string, data: { currentPassword: string, newEmail?: string, newPassword?: string }): Promise<User> => {
-    const apiCall = () => fetch(`${API_URL}/users/${userId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    });
+  updateProfile: async (
+    userId: string,
+    updates: {
+      currentPassword?: string;
+      newEmail?: string;
+      newPassword?: string;
+      avatarUrl?: string;
+    }
+  ): Promise<User> => {
+    try {
+      const response = await fetch(`${API_URL}/users/${userId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
 
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Update failed');
+      }
+
+      const updatedUser = await response.json();
+      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(updatedUser));
+      return updatedUser;
+    } catch (error: any) {
+      console.warn("Profile update failed:", error.message);
+      throw new Error(error.message || "Offline editing not supported");
+    }
+  },
+
+  deleteSong: async (songId: string): Promise<void> => {
+    const apiCall = () => fetch(`${API_URL}/songs/${songId}`, { method: 'DELETE' });
     const fallback = async () => {
-      const users = JSON.parse(localStorage.getItem(LOCAL_USERS_KEY) || '[]');
-      const userIndex = users.findIndex((u: any) => u.id === userId);
-
-      if (userIndex === -1) throw new Error('User not found');
-
-      const user = users[userIndex];
-      // Check password
-      if (user.password !== data.currentPassword) throw new Error('Incorrect current password');
-
-      // Update fields
-      if (data.newEmail) user.email = data.newEmail;
-      if (data.newPassword) user.password = data.newPassword;
-
-      users[userIndex] = user;
-      localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(users));
-      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
-      return user;
+      const allSongs = JSON.parse(localStorage.getItem(LOCAL_SONGS_KEY) || '[]');
+      const filtered = allSongs.filter((s: any) => s.id !== songId && s._id !== songId);
+      localStorage.setItem(LOCAL_SONGS_KEY, JSON.stringify(filtered));
     };
-
     return fetchWithFallback(apiCall, fallback);
   },
 
@@ -188,13 +213,22 @@ export const dbService = {
     return fetchWithFallback(apiCall, async () => { throw new Error("Online only"); });
   },
 
-  addComment: async (songId: string, userId: string, username: string, content: string): Promise<SavedSong> => {
+  addComment: async (songId: string, userId: string, username: string, content: string, parentCommentId?: string): Promise<SavedSong> => {
     const apiCall = () => fetch(`${API_URL}/songs/${songId}/comment`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, username, content })
+      body: JSON.stringify({ userId, username, content, parentCommentId })
     });
-    return fetchWithFallback(apiCall, async () => { throw new Error("Online only"); });
+    return fetchWithFallback(apiCall, async () => { throw new Error("Comment requires server"); });
+  },
+
+  deleteComment: async (songId: string, commentId: string, userId: string): Promise<SavedSong> => {
+    const apiCall = () => fetch(`${API_URL}/songs/${songId}/comment/${commentId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId })
+    });
+    return fetchWithFallback(apiCall, async () => { throw new Error("Delete comment requires server"); });
   },
 
   rateSong: async (songId: string, userId: string, score: number): Promise<SavedSong> => {
@@ -203,6 +237,16 @@ export const dbService = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId, score })
     });
+    return fetchWithFallback(apiCall, async () => { throw new Error("Online only"); });
+  },
+
+  getUserProfile: async (userId: string): Promise<UserProfile> => {
+    const apiCall = () => fetch(`${API_URL}/users/${userId}/profile`);
+    return fetchWithFallback(apiCall, async () => { throw new Error("Online only"); });
+  },
+
+  getUserPublicSongs: async (userId: string): Promise<SavedSong[]> => {
+    const apiCall = () => fetch(`${API_URL}/users/${userId}/public-songs`);
     return fetchWithFallback(apiCall, async () => { throw new Error("Online only"); });
   }
 };

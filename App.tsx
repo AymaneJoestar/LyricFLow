@@ -13,10 +13,12 @@ import { AuthForm } from './components/AuthForm';
 import { ProfilePage } from './components/ProfilePage';
 import { FeedbackModal } from './components/FeedbackModal';
 import { UpgradeModal } from './components/UpgradeModal';
+import { Avatar } from './components/Avatar';
 import { AdBanner } from './components/AdBanner';
 import { CommunityPage } from './components/CommunityPage';
+import { PublicProfilePage } from './components/PublicProfilePage';
 
-type ViewState = 'landing' | 'form-standard' | 'form-inspiration' | 'result' | 'auth' | 'profile' | 'community' | 'community-song';
+type ViewState = 'landing' | 'form-standard' | 'form-inspiration' | 'result' | 'auth' | 'profile' | 'community' | 'community-song' | 'public-profile';
 
 const App: React.FC = () => {
   const [view, setView] = useState<ViewState>('landing');
@@ -27,6 +29,7 @@ const App: React.FC = () => {
   const [showFeedback, setShowFeedback] = useState(false);
   const [showUpgrade, setShowUpgrade] = useState(false);
   const [communitySong, setCommunitySong] = useState<SavedSong | null>(null);
+  const [viewingUserId, setViewingUserId] = useState<string | null>(null);
 
   // Connection Status
   const [isServerOnline, setIsServerOnline] = useState(false);
@@ -108,13 +111,13 @@ const App: React.FC = () => {
           <span className="text-2xl font-display font-bold uppercase tracking-tight">LyricFlow</span>
         </div>
 
-        <div className="flex gap-4 items-center">
+        <div className="flex items-center gap-4">
           {user ? (
             <>
               {/* Tier Badge */}
-              <div className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-widest ${user.tier === SubscriptionTier.Pro
-                ? 'bg-primary/20 text-primary border border-primary/30'
-                : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+              <div className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${user.tier === SubscriptionTier.Pro
+                ? 'bg-gradient-to-r from-yellow-400 to-orange-500 text-black'
+                : 'bg-white/10 text-gray-400'
                 }`}>
                 {user.tier === SubscriptionTier.Pro ? '⭐ Pro' : 'Free'}
               </div>
@@ -125,8 +128,17 @@ const App: React.FC = () => {
                 </button>
               )}
 
+              {/* Profile Button with Avatar */}
+              <button
+                onClick={() => setView('profile')}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-colors group"
+                title="View your library"
+              >
+                <Avatar avatarUrl={user.avatarUrl} username={user.username} size="sm" />
+                <span className="text-sm font-bold text-white group-hover:text-primary transition-colors">{user.username}</span>
+              </button>
+
               <button onClick={() => setShowFeedback(true)} className="text-sm font-bold text-gray-400 hover:text-white uppercase tracking-widest">Feedback</button>
-              <button onClick={() => setView('profile')} className="text-sm font-bold text-gray-400 hover:text-white uppercase tracking-widest">Library</button>
               <button onClick={() => { dbService.logout(); setUser(null); setView('auth'); }} className="text-sm font-bold text-red-500/80 hover:text-red-500 uppercase tracking-widest">Logout</button>
             </>
           ) : (
@@ -180,8 +192,16 @@ const App: React.FC = () => {
         {view === 'auth' && <AuthForm onLoginSuccess={(u) => { setUser(u); setView('landing'); }} onBack={() => setView('landing')} />}
         {view === 'form-standard' && user && <InputForm onSubmit={handleGenerate} isLoading={state.isLoading} onBack={() => setView('landing')} />}
         {view === 'form-inspiration' && user && <InspirationForm onSubmit={handleGenerate} isLoading={state.isLoading} onBack={() => setView('landing')} />}
-        {view === 'profile' && user && <ProfilePage user={user} onLoadSong={(s) => { setState({ isLoading: false, error: null, data: s }); setIsSaved(true); setView('result'); }} onBack={() => setView('landing')} />}
+        {view === 'profile' && user && <ProfilePage user={user} onUserUpdate={setUser} onLoadSong={(s) => { setState({ isLoading: false, error: null, data: s }); setIsSaved(true); setView('result'); }} onBack={() => setView('landing')} />}
         {view === 'community' && <CommunityPage onViewSong={(song) => { setCommunitySong(song); setView('community-song'); }} />}
+
+        {view === 'public-profile' && viewingUserId && (
+          <PublicProfilePage
+            userId={viewingUserId}
+            onViewSong={(song) => { setCommunitySong(song); setView('community-song'); }}
+            onBack={() => setView('community')}
+          />
+        )}
 
         {view === 'community-song' && communitySong && (
           <div className="w-full flex flex-col items-center gap-6">
@@ -194,6 +214,8 @@ const App: React.FC = () => {
               isGeneratingAudio={false}
               readOnly={true}
               currentUser={user ? { id: user.id, username: user.username } : undefined}
+              onAuthorClick={(userId) => { setViewingUserId(userId); setView('public-profile'); }}
+              onUsernameClick={(userId) => { setViewingUserId(userId); setView('public-profile'); }}
             />
           </div>
         )}

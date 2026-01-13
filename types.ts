@@ -34,10 +34,13 @@ export interface SongRecommendation {
 }
 
 export interface Comment {
+  _id?: string; // Comment ID for referencing in replies
   userId: string;
   username: string;
   content: string;
   createdAt: string;
+  parentCommentId?: string; // Reference to parent comment for threading
+  avatarUrl?: string; // Snapshot of user avatar at time of comment
 }
 
 export interface Rating {
@@ -70,6 +73,18 @@ export interface User {
   username: string;
   email: string;
   tier: SubscriptionTier;
+  avatarUrl?: string;  // NEW: Profile picture URL
+}
+
+export interface UserProfile {
+  id: string;
+  username: string;
+  avatarUrl?: string;
+  createdAt: number;
+  stats: {
+    publicSongs: number;
+    totalComments: number;
+  };
 }
 
 export interface SavedSong extends SongLyrics {

@@ -17,6 +17,8 @@ interface LyricCardProps {
   readOnly?: boolean;
   currentUser?: { id: string; username: string };
   onToggleShare?: (isPublic: boolean) => void;
+  onAuthorClick?: (userId: string) => void;
+  onUsernameClick?: (userId: string) => void;
   minimized?: boolean;
   onExpand?: () => void;
 }
@@ -90,6 +92,8 @@ export const LyricCard: React.FC<LyricCardProps> = ({
   readOnly = false,
   currentUser,
   onToggleShare,
+  onAuthorClick,
+  onUsernameClick,
   minimized = false,
   onExpand
 }) => {
@@ -99,7 +103,7 @@ export const LyricCard: React.FC<LyricCardProps> = ({
   const [isGeneraringArt, setIsGeneratingArt] = useState(false);
 
   // Community State
-  const [showComments, setShowComments] = useState(false);
+  const [showComments, setShowComments] = useState(true); // Show by default for better UX
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
 
   useEffect(() => {
@@ -109,59 +113,154 @@ export const LyricCard: React.FC<LyricCardProps> = ({
   }, [data]);
 
   const handleRate = async (score: number) => {
-    if (!currentUser || !onUpdate) return;
+    if (!currentUser) {
+      alert('Please log in to rate songs!');
+      return;
+    }
     try {
-      if (data['id']) {
-        await dbService.rateSong(data['id'], currentUser.id, score);
-        // Optimistic update would require more complex prop drilling or re-fetch
-        // For now, let's assume parent re-fetches or we just show feedback
-        alert(`Rated ${score} stars!`);
+      const songId = (data as any).id || (data as any)._id;
+      if (songId) {
+        // Optimistic update - update UI immediately
+        const existingRatings = data.ratings || [];
+        const userRatingIndex = existingRatings.findIndex(r => r.userId === currentUser.id);
+
+        let newRatings;
+        if (userRatingIndex >= 0) {
+          // Update existing rating
+          newRatings = [...existingRatings];
+          newRatings[userRatingIndex] = { userId: currentUser.id, score };
+        } else {
+          // Add new rating
+          newRatings = [...existingRatings, { userId: currentUser.id, score }];
+        }
+
+        // Calculate new average
+        const totalScore = newRatings.reduce((sum, r) => sum + r.score, 0);
+        const newAverage = totalScore / newRatings.length;
+
+        // Update local state immediately
+        const updatedData = {
+          ...data,
+          ratings: newRatings,
+          averageRating: newAverage
+        };
+        setEditableData(updatedData);
+
+        // Send to backend
+        await dbService.rateSong(songId, currentUser.id, score);
+
+        // No alert needed - user sees the change happen
+      } else {
+        alert('Cannot rate unsaved song');
       }
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      alert('Failed to submit rating. Please try again.');
+      // Revert on error
+      setEditableData(data);
+    }
   };
 
-  const handleAddComment = async (content: string) => {
-    if (!currentUser) return;
+  const handleAddComment = async (content: string, parentCommentId?: string) => {
+    if (!currentUser) {
+      alert('Please log in to comment!');
+      return;
+    }
     setIsSubmittingComment(true);
     try {
-      if (data['id']) {
-        await dbService.addComment(data['id'], currentUser.id, currentUser.username, content);
-        alert("Comment posted!");
+      const songId = (data as any).id || (data as any)._id;
+      if (songId) {
+        // Optimistic update - add comment to UI immediately
+        const newComment = {
+          userId: currentUser.id,
+          username: currentUser.username,
+          content: content,
+          createdAt: new Date(),
+          parentCommentId: parentCommentId || undefined,
+          _id: `temp_${Date.now()}` // Temporary ID for optimistic UI
+        };
+
+        const existingComments = editableData.comments || [];
+        const updatedData = {
+          ...editableData,
+          comments: [...existingComments, newComment]
+        };
+        setEditableData(updatedData);
+
+        // Send to backend
+        await dbService.addComment(songId, currentUser.id, currentUser.username, content, parentCommentId);
+
+        // Success - comment is already showing in UI
       } else {
         alert("Cannot comment on unsaved song");
       }
     } catch (e) {
       console.error(e);
-      alert("Failed to post comment");
+      alert("❌ Failed to post comment. Please try again.");
+      // Revert on error
+      setEditableData(data);
     } finally {
       setIsSubmittingComment(false);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    if (!currentUser) return;
+
+    if (!confirm("Are you sure you want to delete this comment?")) return;
+
+    try {
+      const songId = (data as any).id || (data as any)._id;
+      if (songId) {
+        // Optimistic update
+        const existingComments = editableData.comments || [];
+        const updatedComments = existingComments.filter(c => c._id !== commentId);
+
+        const updatedData = {
+          ...editableData,
+          comments: updatedComments
+        };
+        setEditableData(updatedData);
+
+        // Send to backend
+        await dbService.deleteComment(songId, commentId, currentUser.id);
+      }
+    } catch (e) {
+      console.error(e);
+      alert("❌ Failed to delete comment.");
+      setEditableData(data); // Revert
     }
   };
 
   const handleGenerateArt = async () => {
     setIsGeneratingArt(true);
     try {
-      // Generate unique art based on song details
-      const url = generateCoverArtUrl(
+      // Generate unique art based on song details using Replicate API
+      const url = await generateCoverArtUrl(
         data.title,
         'artistic', // Mood placeholder (could be derived if we had it in data)
         data.styleDescription,
         `${data.title} song cover`
       );
 
-      // Pre-load image
-      const img = new Image();
-      img.src = url;
-      img.onload = () => {
-        setCoverArt(url);
-        onUpdate({ ...data, coverArtUrl: url }); // Auto-save update
-        setIsGeneratingArt(false);
-      };
-      img.onerror = () => {
-        setIsGeneratingArt(false);
-        alert("Failed to load generated image.");
-      };
-    } catch (e) {
+      setCoverArt(url);
+      const updatedData = { ...data, coverArtUrl: url };
+      onUpdate(updatedData); // Auto-save update to local state
+
+      // Auto-save to DB if song exists
+      const songId = (data as any).id || (data as any)._id;
+      if (songId) {
+        try {
+          await dbService.updateSong(songId, { coverArtUrl: url });
+          console.log("Cover art updated in DB");
+        } catch (e) {
+          console.error("Failed to auto-save cover art to DB", e);
+        }
+      }
+    } catch (e: any) {
+      console.error('Cover art generation failed:', e);
+      alert(e.message || "Failed to generate cover art.");
+    } finally {
       setIsGeneratingArt(false);
     }
   };
@@ -217,7 +316,22 @@ export const LyricCard: React.FC<LyricCardProps> = ({
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent flex items-end p-4">
             <div>
               <h3 className="text-xl font-display font-bold text-white mb-1">{data.title}</h3>
-              <p className="text-sm text-gray-300">{data.authorName || 'Anonymous'}</p>
+              {
+                data.authorName && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const songUserId = (data as any).userId;
+                      if (onAuthorClick && songUserId) {
+                        onAuthorClick(songUserId);
+                      }
+                    }}
+                    className="text-sm text-gray-300 hover:text-primary transition-colors"
+                  >
+                    {data.authorName}
+                  </button>
+                )
+              }
             </div>
           </div>
         </div>
@@ -364,13 +478,24 @@ export const LyricCard: React.FC<LyricCardProps> = ({
       {readOnly && (
         <div className="flex items-center gap-2 mb-6">
           <StarRating
-            rating={Math.round(data.averageRating || 0)}
+            rating={Math.round(editableData.averageRating || 0)}
             readOnly={!currentUser}
             onRate={handleRate}
           />
-          <span className="text-sm text-gray-400">({data.ratings?.length || 0} reviews)</span>
+          <span className="text-sm text-gray-400">({editableData.ratings?.length || 0} reviews)</span>
           <span className="text-sm text-gray-500">•</span>
-          <span className="text-sm text-gray-400">By {data.authorName || 'Anonymous'}</span>
+          <span className="text-sm text-gray-400">By </span>
+          <button
+            onClick={() => {
+              const songUserId = (editableData as any).userId;
+              if (onAuthorClick && songUserId) {
+                onAuthorClick(songUserId);
+              }
+            }}
+            className="text-sm text-primary hover:text-white transition-colors font-bold"
+          >
+            {editableData.authorName || 'Anonymous'}
+          </button>
         </div>
       )}
 
@@ -510,28 +635,23 @@ export const LyricCard: React.FC<LyricCardProps> = ({
             </div>
           )}
 
-          {/* Comments Section Toggle */}
+          {/* Comments Section - Always visible for better UX */}
           {readOnly && (
             <div className="mt-8 pt-6 border-t border-white/5">
-              <button
-                onClick={() => setShowComments(!showComments)}
-                className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
-              >
-                <span>{showComments ? 'Hide' : 'Show'} Comments ({data.comments?.length || 0})</span>
-                <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 transition-transform ${showComments ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              <h3 className="text-lg font-display font-bold text-white mb-4 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                 </svg>
-              </button>
-
-              {showComments && (
-                <div className="mt-6 animate-fade-in">
-                  <CommentSection
-                    comments={data.comments}
-                    onAddComment={handleAddComment}
-                    isSubmitting={isSubmittingComment}
-                  />
-                </div>
-              )}
+                Discussion ({editableData.comments?.length || 0})
+              </h3>
+              <CommentSection
+                comments={editableData.comments}
+                onAddComment={handleAddComment}
+                onDeleteComment={handleDeleteComment}
+                onUsernameClick={onUsernameClick}
+                currentUserId={currentUser?.id}
+                isSubmitting={isSubmittingComment}
+              />
             </div>
           )}
 

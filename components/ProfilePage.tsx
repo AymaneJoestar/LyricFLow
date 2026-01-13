@@ -1,17 +1,25 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { SavedSong, User } from '../types';
 import { dbService } from '../services/dbService';
+import { uploadService } from '../services/uploadService';
+import { Avatar } from './Avatar';
 
 interface ProfilePageProps {
   user: User;
+  onUserUpdate?: (user: User) => void;
   onLoadSong: (song: SavedSong) => void;
   onBack: () => void;
 }
 
-export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onLoadSong, onBack }) => {
+export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUserUpdate, onLoadSong, onBack }) => {
   const [songs, setSongs] = useState<SavedSong[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Avatar Upload State
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(user.avatarUrl || null);
 
   // Edit Profile State
   const [isEditing, setIsEditing] = useState(false);
@@ -38,6 +46,35 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onLoadSong, onBa
       setTimeout(() => setIsEditing(false), 2000);
     } catch (err: any) {
       setEditStatus({ type: 'error', message: err.message || 'Update failed' });
+    }
+  };
+
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingAvatar(true);
+    try {
+      // Upload to Cloudinary
+      const avatarUrl = await uploadService.uploadToCloudinary(file);
+
+      // Update user profile
+      const updatedUser = await dbService.updateProfile(user.id, { avatarUrl });
+
+      // Update preview
+      setAvatarPreview(avatarUrl);
+
+      // Update parent App component's user state
+      if (onUserUpdate) {
+        onUserUpdate(updatedUser);
+      }
+
+      setEditStatus({ type: 'success', message: 'Avatar updated successfully!' });
+    } catch (err: any) {
+      setEditStatus({ type: 'error', message: err.message || 'Failed to upload avatar' });
+    } finally {
+      setIsUploadingAvatar(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -75,12 +112,33 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onLoadSong, onBa
   return (
     <div className="w-full max-w-5xl animate-fade-in">
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
-        <div className="flex items-center">
-          <button onClick={onBack} className="mr-4 p-2 rounded-full hover:bg-white/5 text-gray-400 hover:text-white transition-colors">
+        <div className="flex items-center gap-4">
+          <button onClick={onBack} className="p-2 rounded-full hover:bg-white/5 text-gray-400 hover:text-white transition-colors">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
           </button>
+
+          {/* Avatar with Upload */}
+          <div className="relative group">
+            <Avatar avatarUrl={avatarPreview} username={user.username} size="lg" />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploadingAvatar}
+              className="absolute inset-0 rounded-full bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold disabled:cursor-not-allowed"
+              title="Change avatar"
+            >
+              {isUploadingAvatar ? '...' : '📷'}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleAvatarUpload}
+              className="hidden"
+            />
+          </div>
+
           <div>
             <h2 className="text-3xl font-display font-bold text-white">Your Library</h2>
             <p className="text-gray-400">Welcome back, {user.username}</p>
