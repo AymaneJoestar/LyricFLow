@@ -33,18 +33,43 @@ export interface SongRecommendation {
   reason: string;
 }
 
+export interface Comment {
+  userId: string;
+  username: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface Rating {
+  userId: string;
+  score: number;
+}
+
 export interface SongLyrics {
   title: string;
   styleDescription: string;
   structure: LyricSection[];
   recommendations: SongRecommendation[];
   audioUrl?: string; // URL to the generated audio file
+  coverArtUrl?: string; // URL for the album art
+  // Community Fields
+  isPublic?: boolean;
+  authorName?: string;
+  averageRating?: number;
+  ratings?: Rating[];
+  comments?: Comment[];
+}
+
+export enum SubscriptionTier {
+  Free = 'free',
+  Pro = 'pro'
 }
 
 export interface User {
   id: string;
   username: string;
   email: string;
+  tier: SubscriptionTier;
 }
 
 export interface SavedSong extends SongLyrics {

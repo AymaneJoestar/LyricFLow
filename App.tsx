@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { generateSongLyrics } from './services/geminiService';
 import { generateSunoAudio } from './services/sunoService';
 import { dbService } from './services/dbService';
-import { GenerationState, GenerationInput, SongLyrics, User, SavedSong } from './types';
+import { GenerationState, GenerationInput, SongLyrics, User, SavedSong, SubscriptionTier } from './types';
 import { InputForm } from './components/InputForm';
 import { InspirationForm } from './components/InspirationForm';
 import { LandingPage } from './components/LandingPage';
@@ -11,8 +11,12 @@ import { LyricCard } from './components/LyricCard';
 import { Button } from './components/Button';
 import { AuthForm } from './components/AuthForm';
 import { ProfilePage } from './components/ProfilePage';
+import { FeedbackModal } from './components/FeedbackModal';
+import { UpgradeModal } from './components/UpgradeModal';
+import { AdBanner } from './components/AdBanner';
+import { CommunityPage } from './components/CommunityPage';
 
-type ViewState = 'landing' | 'form-standard' | 'form-inspiration' | 'result' | 'auth' | 'profile';
+type ViewState = 'landing' | 'form-standard' | 'form-inspiration' | 'result' | 'auth' | 'profile' | 'community' | 'community-song';
 
 const App: React.FC = () => {
   const [view, setView] = useState<ViewState>('landing');
@@ -20,6 +24,9 @@ const App: React.FC = () => {
   const [state, setState] = useState<GenerationState>({ isLoading: false, error: null, data: null });
   const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [showUpgrade, setShowUpgrade] = useState(false);
+  const [communitySong, setCommunitySong] = useState<SavedSong | null>(null);
 
   // Connection Status
   const [isServerOnline, setIsServerOnline] = useState(false);
@@ -53,6 +60,15 @@ const App: React.FC = () => {
       const data = await generateSongLyrics(input);
       setState({ isLoading: false, error: null, data });
       setView('result');
+
+      // Feedback Trigger: 100% chance if feedback not given yet (Delayed by 15s)
+      const hasGivenFeedback = localStorage.getItem('lyricflow_feedback_given');
+      if (!hasGivenFeedback) {
+        setTimeout(() => {
+          setShowFeedback(true);
+        }, 15000); // 15 seconds delay to let them read lyrics
+      }
+
     } catch (err: any) {
       setState({ isLoading: false, error: "AI Error: check API key.", data: null });
     }
@@ -70,6 +86,18 @@ const App: React.FC = () => {
     }
   };
 
+  const handleUpgrade = async (tier: SubscriptionTier) => {
+    if (!user) return;
+    try {
+      const updatedUser = await dbService.upgradeTier(user.id, tier);
+      setUser(updatedUser);
+      setShowUpgrade(false);
+      alert(`Successfully upgraded to ${tier} tier!`);
+    } catch (e) {
+      alert('Upgrade failed. Please try again.');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-dark text-white font-sans flex flex-col p-6 sm:p-12">
       <nav className="max-w-5xl w-full mx-auto flex justify-between items-center mb-12 relative z-10">
@@ -80,33 +108,95 @@ const App: React.FC = () => {
           <span className="text-2xl font-display font-bold uppercase tracking-tight">LyricFlow</span>
         </div>
 
-        <div className="flex gap-4">
+        <div className="flex gap-4 items-center">
           {user ? (
             <>
+              {/* Tier Badge */}
+              <div className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-widest ${user.tier === SubscriptionTier.Pro
+                ? 'bg-primary/20 text-primary border border-primary/30'
+                : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+                }`}>
+                {user.tier === SubscriptionTier.Pro ? '⭐ Pro' : 'Free'}
+              </div>
+
+              {user.tier === SubscriptionTier.Free && (
+                <button onClick={() => setShowUpgrade(true)} className="text-sm font-bold text-primary hover:brightness-125 uppercase tracking-widest">
+                  Upgrade
+                </button>
+              )}
+
+              <button onClick={() => setShowFeedback(true)} className="text-sm font-bold text-gray-400 hover:text-white uppercase tracking-widest">Feedback</button>
               <button onClick={() => setView('profile')} className="text-sm font-bold text-gray-400 hover:text-white uppercase tracking-widest">Library</button>
-              <button onClick={() => { dbService.logout(); setUser(null); setView('landing'); }} className="text-sm font-bold text-red-500/80 hover:text-red-500 uppercase tracking-widest">Logout</button>
+              <button onClick={() => { dbService.logout(); setUser(null); setView('auth'); }} className="text-sm font-bold text-red-500/80 hover:text-red-500 uppercase tracking-widest">Logout</button>
             </>
           ) : (
             <button onClick={() => setView('auth')} className="text-sm font-bold text-primary uppercase tracking-widest hover:brightness-125">Sign In</button>
           )}
+          <div className="w-px h-6 bg-white/10 mx-2"></div>
+          <button
+            onClick={() => setView('community')}
+            className={`text-sm font-bold uppercase tracking-widest ${view === 'community' ? 'text-primary' : 'text-gray-400 hover:text-white'}`}
+          >
+            Community
+          </button>
         </div>
       </nav>
 
       <main className="flex-1 flex flex-col items-center justify-center max-w-5xl w-full mx-auto relative z-10 pb-24">
         {state.error && <div className="bg-red-500/10 border border-red-500/30 p-4 rounded-xl text-red-200 mb-8">{state.error}</div>}
 
+        {/* Show ad during loading for free users */}
+        {state.isLoading && (
+          <div className="flex flex-col items-center w-full">
+            <div className="text-center mb-6">
+              <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-primary mb-4"></div>
+              <p className="text-gray-400 text-lg">Crafting your masterpiece...</p>
+            </div>
+            {user?.tier === SubscriptionTier.Free && (
+              <AdBanner
+                show={true}
+                position="inline"
+                onUpgradeClick={() => setShowUpgrade(true)}
+              />
+            )}
+          </div>
+        )}
+
         {view === 'landing' && (
           <div className="text-center animate-fade-in">
             <h1 className="text-6xl md:text-7xl font-display font-bold mb-6 tracking-tighter">Your AI <span className="text-primary">Songwriter.</span></h1>
             <p className="text-xl text-gray-400 mb-12 max-w-2xl mx-auto">Generate studio-ready lyrics and reference tracks in seconds using the world's most creative AI agent.</p>
-            <LandingPage onSelectStandard={() => setView('form-standard')} onSelectInspiration={() => setView('form-inspiration')} />
+            {user ? (
+              <LandingPage onSelectStandard={() => setView('form-standard')} onSelectInspiration={() => setView('form-inspiration')} />
+            ) : (
+              <div className="flex flex-col items-center gap-6">
+                <p className="text-gray-500 text-lg">Please sign in to start creating songs</p>
+                <button onClick={() => setView('auth')} className="px-8 py-4 bg-primary text-dark font-bold rounded-xl hover:brightness-110 transition-all uppercase tracking-widest">Sign In to Continue</button>
+              </div>
+            )}
           </div>
         )}
 
         {view === 'auth' && <AuthForm onLoginSuccess={(u) => { setUser(u); setView('landing'); }} onBack={() => setView('landing')} />}
-        {view === 'form-standard' && <InputForm onSubmit={handleGenerate} isLoading={state.isLoading} onBack={() => setView('landing')} />}
-        {view === 'form-inspiration' && <InspirationForm onSubmit={handleGenerate} isLoading={state.isLoading} onBack={() => setView('landing')} />}
+        {view === 'form-standard' && user && <InputForm onSubmit={handleGenerate} isLoading={state.isLoading} onBack={() => setView('landing')} />}
+        {view === 'form-inspiration' && user && <InspirationForm onSubmit={handleGenerate} isLoading={state.isLoading} onBack={() => setView('landing')} />}
         {view === 'profile' && user && <ProfilePage user={user} onLoadSong={(s) => { setState({ isLoading: false, error: null, data: s }); setIsSaved(true); setView('result'); }} onBack={() => setView('landing')} />}
+        {view === 'community' && <CommunityPage onViewSong={(song) => { setCommunitySong(song); setView('community-song'); }} />}
+
+        {view === 'community-song' && communitySong && (
+          <div className="w-full flex flex-col items-center gap-6">
+            <Button variant="ghost" onClick={() => setView('community')}>← Back to Community</Button>
+            <LyricCard
+              data={communitySong}
+              onCopy={() => { }}
+              onUpdate={() => { }}
+              onGenerateAudio={() => { }}
+              isGeneratingAudio={false}
+              readOnly={true}
+              currentUser={user ? { id: user.id, username: user.username } : undefined}
+            />
+          </div>
+        )}
 
         {view === 'result' && state.data && (
           <div className="w-full flex flex-col items-center gap-6">
@@ -118,6 +208,24 @@ const App: React.FC = () => {
               onGenerateAudio={async () => {
                 setIsGeneratingAudio(true);
                 try {
+                  // LIMIT CHECK
+                  if (user) {
+                    const songs = await dbService.getUserSongs(user.id);
+                    const audioCount = songs.filter(s => s.audioUrl).length;
+                    const limit = user.tier === SubscriptionTier.Pro ? 10 : 1;
+
+                    if (audioCount >= limit) {
+                      const upgradeMsg = user.tier === SubscriptionTier.Free
+                        ? ' Upgrade to Pro for 10 audio generations!'
+                        : '';
+                      alert(`Limit Reached: You can only generate ${limit} audio track${limit > 1 ? 's' : ''} on the ${user.tier} plan.${upgradeMsg}`);
+                      if (user.tier === SubscriptionTier.Free) {
+                        setShowUpgrade(true);
+                      }
+                      return;
+                    }
+                  }
+
                   const url = await generateSunoAudio(state.data!);
                   const newData = { ...state.data!, audioUrl: url };
                   setState(prev => ({ ...prev, data: newData }));
@@ -145,10 +253,44 @@ const App: React.FC = () => {
               isGeneratingAudio={isGeneratingAudio}
               onSave={handleSave}
               isSaved={isSaved}
+              currentUser={user ? { id: user.id, username: user.username } : undefined}
+              onToggleShare={async (isPublic) => {
+                if (!state.data || !user) return;
+                try {
+                  // If it's a saved song (has ID), update backend
+                  if ((state.data as any).id || (state.data as any)._id) {
+                    const songId = (state.data as any).id || (state.data as any)._id;
+                    await dbService.toggleShare(songId, isPublic);
+                    setState(prev => prev.data ? ({ ...prev, data: { ...prev.data, isPublic } }) : prev);
+                  } else {
+                    // Not saved yet, just update local state (will be saved with this status)
+                    setState(prev => prev.data ? ({ ...prev, data: { ...prev.data, isPublic } }) : prev);
+                  }
+                } catch (e) {
+                  console.error("Failed to toggle share:", e);
+                  alert("Failed to update share status. Please try again.");
+                }
+              }}
             />
           </div>
         )}
       </main>
+
+      <FeedbackModal
+        isOpen={showFeedback}
+        onClose={() => setShowFeedback(false)}
+        onTakeSurvey={() => {
+          localStorage.setItem('lyricflow_feedback_given', 'true');
+          setShowFeedback(false);
+        }}
+      />
+
+      <UpgradeModal
+        isOpen={showUpgrade}
+        onClose={() => setShowUpgrade(false)}
+        currentTier={user?.tier || SubscriptionTier.Free}
+        onUpgrade={handleUpgrade}
+      />
 
       {/* FIXED CONNECTION STATUS BAR */}
       <div className="fixed bottom-0 left-0 right-0 bg-surface/80 backdrop-blur-xl border-t border-white/5 p-4 z-50">
