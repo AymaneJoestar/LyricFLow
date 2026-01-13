@@ -4,8 +4,8 @@ import { SongLyrics } from "../types";
 // this service is structured to be easily adapted to whichever specific endpoint/wrapper you use.
 // It currently includes a MOCK fallback to ensure the UI works for demonstration.
 
-const SUNO_API_URL = process.env.SUNO_API_URL || "https://api.suno-wrapper.com/generate";
-const API_KEY = process.env.SUNO_API_KEY || "";
+const SUNO_API_URL = import.meta.env.VITE_SUNO_API_URL || "https://api.suno-wrapper.com/generate";
+const API_KEY = import.meta.env.VITE_SUNO_API_KEY || "";
 
 export const generateSunoAudio = async (lyrics: SongLyrics): Promise<string> => {
   // --- MOCK MODE (Activates if no API Key is set) ---
