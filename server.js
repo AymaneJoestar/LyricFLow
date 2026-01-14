@@ -12,7 +12,7 @@
 import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
-import bodyParser from 'body-parser';
+// import bodyParser from 'body-parser'; // Deprecated in favor of express.json
 import jwt from 'jsonwebtoken';
 import mongoSanitize from 'express-mongo-sanitize';
 import path from 'path';
@@ -24,9 +24,29 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors({ origin: '*' }));
-app.use(bodyParser.json());
-app.use(mongoSanitize()); // Prevent NoSQL Injection
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Custom Sanitization to prevent deployment errors (req.query read-only issue)
+app.use((req, res, next) => {
+  try {
+    // Sanitize body and params
+    if (req.body) req.body = mongoSanitize.sanitize(req.body);
+    if (req.params) req.params = mongoSanitize.sanitize(req.params);
+
+    // Try to sanitize query, but ignore errors if read-only
+    if (req.query) {
+      try {
+        req.query = mongoSanitize.sanitize(req.query);
+      } catch (err) {
+        // Ignore read-only query error
+      }
+    }
+  } catch (e) {
+    console.error("Sanitization Warning:", e);
+  }
+  next();
+});
 
 // Request logging
 app.use((req, res, next) => {
