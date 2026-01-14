@@ -40,11 +40,16 @@ export const generateCoverArt = async (
 ): Promise<string> => {
     const prompt = generateCoverArtPrompt(title, mood, style, description);
 
+    // Get token from localStorage
+    const user = JSON.parse(localStorage.getItem('lyricflow_current_user') || 'null');
+    const token = user ? user.token : null;
+
     try {
         const response = await fetch(`${API_URL}/generate-cover-art`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                ...(token ? { 'Authorization': `Bearer ${token}` } : {})
             },
             body: JSON.stringify({ prompt })
         });

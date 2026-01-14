@@ -14,14 +14,19 @@ export const generateSongLyrics = async (input: GenerationInput): Promise<SongLy
     specificPrompt = `Style Reference Songs: ${input.songs.join(', ')}\nDetails: ${input.additionalInfo || "None"}`;
   }
 
-  const prompt = `Write a high-quality, professional song based on:\n${specificPrompt}\n\nInclude Verse/Chorus structure and rhyme scheme. Also suggest 3 real matching songs.`;
+  const prompt = `Write a high-quality, professional song based on:\n${specificPrompt}\n\nInclude Verse/Chorus structure and rhyme scheme. Also suggest 5 real matching songs.`;
 
   try {
     const response = await ai.models.generateContent({
       model: modelId,
       contents: prompt,
       config: {
-        systemInstruction: "You are a world-class songwriter. Strictly output JSON matching the provided schema.",
+        systemInstruction: `You are a world-class songwriter and music critic. 
+        1. Write lyrics that strictly match the requested style/topic.
+        2. Provide 5 music recommendations that perfectly match the VIBE of the generated lyrics.
+        3. Recommendations must be real, existing songs.
+        4. Include a mix of popular hits and "deep cuts" (lesser known but perfect matches).
+        5. For "reason", explain the sonic connection (e.g. "Similar tempo and synth texture", "Matches the lyrical theme of heartbreak").`,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,

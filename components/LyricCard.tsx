@@ -36,15 +36,12 @@ const getGradient = (str: string) => {
 
 // Sub-component for individual recommendations
 const RecommendationItem: React.FC<{ rec: SongRecommendation }> = ({ rec }) => {
-  const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(`${rec.title} ${rec.artist} official audio`)}`;
+  const youtubeUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(`${rec.title} ${rec.artist} official audio`)}`;
+  const spotifyUrl = `https://open.spotify.com/search/${encodeURIComponent(`${rec.title} ${rec.artist}`)}`;
 
   return (
-    <a
-      href={searchUrl}
-      target="_blank"
-      rel="noopener noreferrer"
+    <div
       className="flex flex-col rounded-lg bg-surface border border-white/5 hover:border-primary/40 transition-all group h-full overflow-hidden hover:-translate-y-1 hover:shadow-lg"
-      title={`Listen to ${rec.title} on YouTube`}
     >
       <div className="relative w-full aspect-video group-hover:brightness-110 transition-all duration-500 overflow-hidden bg-dark">
         <div
@@ -52,12 +49,24 @@ const RecommendationItem: React.FC<{ rec: SongRecommendation }> = ({ rec }) => {
           style={{ background: getGradient(rec.title) }}
         ></div>
 
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="w-12 h-12 bg-black/40 backdrop-blur-sm rounded-full flex items-center justify-center border border-white/10 group-hover:scale-110 group-hover:bg-primary group-hover:border-primary transition-all duration-300">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white group-hover:text-black ml-1" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
-            </svg>
-          </div>
+        <div className="absolute inset-0 flex items-center justify-center gap-4 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+          {/* YouTube Link */}
+          <a
+            href={youtubeUrl} target="_blank" rel="noopener noreferrer"
+            className="w-10 h-10 bg-red-600 rounded-full flex items-center justify-center text-white hover:scale-110 transition-transform shadow-lg"
+            title="Watch on YouTube"
+          >
+            <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor"><path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z" /></svg>
+          </a>
+
+          {/* Spotify Link */}
+          <a
+            href={spotifyUrl} target="_blank" rel="noopener noreferrer"
+            className="w-10 h-10 bg-[#1DB954] rounded-full flex items-center justify-center text-white hover:scale-110 transition-transform shadow-lg"
+            title="Listen on Spotify"
+          >
+            <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.48.66.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141 4.439-1.38 9.9-1.32 12.54 1.261.32.32.14.9-.18 1.16zm.12-3.36C15.5 8.4 8.959 8.22 5.239 9.3c-.6.18-1.199-.18-1.38-.72-.18-.6.18-1.2.72-1.38 4.32-1.26 11.58-1.08 15.6 1.32.6.359.78 1.139.42 1.739-.3.54-1.02.72-1.559.42z" /></svg>
+          </a>
         </div>
       </div>
 
@@ -70,14 +79,15 @@ const RecommendationItem: React.FC<{ rec: SongRecommendation }> = ({ rec }) => {
           "{rec.reason}"
         </div>
 
-        <div className="mt-auto pt-4 border-t border-white/5 flex items-center text-xs text-gray-400 group-hover:text-white transition-colors uppercase font-bold tracking-wide">
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z" />
-          </svg>
-          Watch Official Video
+        <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between text-xs text-gray-500 group-hover:text-gray-300 transition-colors">
+          <span className="uppercase font-bold tracking-wide">Listen Now</span>
+          <div className="flex gap-3">
+            <a href={youtubeUrl} target="_blank" rel="noopener noreferrer" className="hover:text-red-500 transition-colors">YouTube</a>
+            <a href={spotifyUrl} target="_blank" rel="noopener noreferrer" className="hover:text-green-500 transition-colors">Spotify</a>
+          </div>
         </div>
       </div>
-    </a>
+    </div>
   );
 };
 

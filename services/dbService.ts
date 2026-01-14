@@ -6,6 +6,16 @@ const CURRENT_USER_KEY = 'lyricflow_current_user';
 const LOCAL_USERS_KEY = 'lyricflow_local_users';
 const LOCAL_SONGS_KEY = 'lyricflow_local_songs';
 
+const getToken = () => {
+  const user = JSON.parse(localStorage.getItem(CURRENT_USER_KEY) || 'null');
+  return user ? user.token : null;
+};
+
+const getAuthHeaders = () => {
+  const token = getToken();
+  return token ? { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` } : { 'Content-Type': 'application/json' };
+};
+
 async function fetchWithFallback(apiCall: () => Promise<Response>, fallback: () => Promise<any>): Promise<any> {
   try {
     const response = await apiCall();
@@ -92,7 +102,7 @@ export const dbService = {
   saveSong: async (userId: string, songData: SongLyrics): Promise<SavedSong> => {
     const apiCall = () => fetch(`${API_URL}/songs`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ userId, ...songData })
     });
     const fallback = async () => {
@@ -108,7 +118,7 @@ export const dbService = {
   updateSong: async (songId: string, songData: Partial<SavedSong>): Promise<SavedSong> => {
     const apiCall = () => fetch(`${API_URL}/songs/${songId}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(songData)
     });
     const fallback = async () => {
@@ -136,7 +146,7 @@ export const dbService = {
   upgradeTier: async (userId: string, tier: 'free' | 'pro'): Promise<User> => {
     const apiCall = () => fetch(`${API_URL}/users/${userId}/upgrade`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ tier })
     });
 
@@ -167,7 +177,7 @@ export const dbService = {
     try {
       const response = await fetch(`${API_URL}/users/${userId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify(updates)
       });
 
@@ -186,7 +196,10 @@ export const dbService = {
   },
 
   deleteSong: async (songId: string): Promise<void> => {
-    const apiCall = () => fetch(`${API_URL}/songs/${songId}`, { method: 'DELETE' });
+    const apiCall = () => fetch(`${API_URL}/songs/${songId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders()
+    });
     const fallback = async () => {
       const allSongs = JSON.parse(localStorage.getItem(LOCAL_SONGS_KEY) || '[]');
       const filtered = allSongs.filter((s: any) => s.id !== songId && s._id !== songId);
@@ -206,7 +219,7 @@ export const dbService = {
   toggleShare: async (songId: string, isPublic: boolean): Promise<SavedSong> => {
     const apiCall = () => fetch(`${API_URL}/songs/${songId}/share`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ isPublic })
     });
     // Reuse general update logic for fallback if needed, or just return mock
@@ -216,7 +229,7 @@ export const dbService = {
   addComment: async (songId: string, userId: string, username: string, content: string, parentCommentId?: string): Promise<SavedSong> => {
     const apiCall = () => fetch(`${API_URL}/songs/${songId}/comment`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ userId, username, content, parentCommentId })
     });
     return fetchWithFallback(apiCall, async () => { throw new Error("Comment requires server"); });
@@ -225,7 +238,7 @@ export const dbService = {
   deleteComment: async (songId: string, commentId: string, userId: string): Promise<SavedSong> => {
     const apiCall = () => fetch(`${API_URL}/songs/${songId}/comment/${commentId}`, {
       method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ userId })
     });
     return fetchWithFallback(apiCall, async () => { throw new Error("Delete comment requires server"); });
@@ -234,7 +247,7 @@ export const dbService = {
   rateSong: async (songId: string, userId: string, score: number): Promise<SavedSong> => {
     const apiCall = () => fetch(`${API_URL}/songs/${songId}/rate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ userId, score })
     });
     return fetchWithFallback(apiCall, async () => { throw new Error("Online only"); });

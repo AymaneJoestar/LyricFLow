@@ -13,6 +13,8 @@ import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
 import bodyParser from 'body-parser';
+import jwt from 'jsonwebtoken';
+import mongoSanitize from 'express-mongo-sanitize';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -24,6 +26,7 @@ const PORT = process.env.PORT || 3001;
 
 app.use(cors({ origin: '*' }));
 app.use(bodyParser.json());
+app.use(mongoSanitize()); // Prevent NoSQL Injection
 
 // Request logging
 app.use((req, res, next) => {
@@ -38,6 +41,7 @@ import dotenv from 'dotenv';
 dotenv.config({ path: path.resolve(__dirname, '.env.local') });
 
 const MONGO_URI = process.env.MONGO_URI;
+const JWT_SECRET = process.env.JWT_SECRET;
 
 async function connectDB() {
   console.log('🔄 Connecting to MongoDB Atlas...');
@@ -115,6 +119,20 @@ function getAudioLimit(tier) {
   return tier === 'pro' ? 10 : 1;
 }
 
+// Authentication Middleware
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Bearer <token>
+
+  if (!token) return res.sendStatus(401); // Unauthorized
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) return res.sendStatus(403); // Forbidden
+    req.user = user;
+    next();
+  });
+}
+
 // Vital for the frontend to detect the server
 app.get('/api/health', (req, res) => {
   res.json({
@@ -133,7 +151,14 @@ app.post('/api/register', async (req, res) => {
     if (existing) return res.status(400).json({ message: 'User exists' });
     const user = new User({ username, email, password });
     await user.save();
-    res.status(201).json({ id: user._id, username: user.username, email: user.email, tier: user.tier });
+
+    // Generate Token
+    const token = jwt.sign(
+      { id: user._id, username: user.username, tier: user.tier },
+      JWT_SECRET
+    );
+
+    res.status(201).json({ id: user._id, username: user.username, email: user.email, tier: user.tier, token });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
@@ -149,20 +174,74 @@ app.post('/api/login', async (req, res) => {
     }
 
     console.log(`✅ Successful login: ${user.username} (${email})`);
-    res.json({ id: user._id, username: user.username, email: user.email, tier: user.tier });
+
+    // Generate Token
+    const token = jwt.sign(
+      { id: user._id, username: user.username, tier: user.tier },
+      JWT_SECRET
+    );
+
+    res.json({ id: user._id, username: user.username, email: user.email, tier: user.tier, token });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-app.post('/api/songs', async (req, res) => {
+app.post('/api/songs', authenticateToken, async (req, res) => {
   try {
-    const { userId, audioUrl } = req.body;
+    const { audioUrl } = req.body;
+    const userId = req.user.id; // Trust token
 
-    // Get user to set authorName
+    // Fetch user to get latest Tier/Limits check
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: 'User not found' });
+    const tier = user.tier;
 
     // LIMIT CHECK: If saving a song with audio, check limit based on tier
     if (audioUrl) {
+      const limit = getAudioLimit(tier);
+      const audioCount = await Song.countDocuments({ userId, audioUrl: { $ne: null } });
+
+      if (audioCount >= limit) {
+        return res.status(403).json({
+          message: `Audio generation limit reached (${limit} song${limit > 1 ? 's' : ''} max for ${tier} tier).`,
+          limit,
+          current: audioCount,
+          tier
+        });
+      }
+    }
+
+    // Add authorName from authenticated user token
+    const songData = {
+      ...req.body,
+      userId: userId,
+      authorName: req.user.username || user.username || 'Anonymous'
+    };
+
+    const song = new Song(songData);
+    await song.save();
+    res.status(201).json(song);
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+app.put('/api/songs/:id', authenticateToken, async (req, res) => {
+  try {
+    const { audioUrl } = req.body;
+    const songId = req.params.id;
+    const userId = req.user.id;
+
+    const currentSong = await Song.findById(songId);
+    if (!currentSong) return res.status(404).json({ message: 'Song not found' });
+
+    // Verify ownership
+    if (currentSong.userId !== userId) {
+      return res.status(403).json({ message: 'Forbidden: You do not own this song' });
+    }
+
+    // LIMIT CHECK: If adding audio to an existing song
+    if (audioUrl && !currentSong.audioUrl) {
+      const user = await User.findById(userId);
+      if (!user) return res.status(404).json({ message: 'User not found' });
+
       const limit = getAudioLimit(user.tier);
       const audioCount = await Song.countDocuments({ userId, audioUrl: { $ne: null } });
 
@@ -176,42 +255,24 @@ app.post('/api/songs', async (req, res) => {
       }
     }
 
-    // Add authorName from user
-    const songData = { ...req.body, authorName: user.username };
-    const song = new Song(songData);
-    await song.save();
-    res.status(201).json(song);
+    const song = await Song.findByIdAndUpdate(songId, req.body, { new: true });
+    res.json(song);
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-app.put('/api/songs/:id', async (req, res) => {
+app.delete('/api/songs/:id', authenticateToken, async (req, res) => {
   try {
-    const { audioUrl } = req.body;
     const songId = req.params.id;
+    const song = await Song.findById(songId);
+    if (!song) return res.status(404).json({ message: 'Song not found' });
 
-    // LIMIT CHECK: If adding audio to an existing song
-    if (audioUrl) {
-      const currentSong = await Song.findById(songId);
-      if (currentSong && !currentSong.audioUrl) { // Only check if adding NEW audio
-        const user = await User.findById(currentSong.userId);
-        if (!user) return res.status(404).json({ message: 'User not found' });
-
-        const limit = getAudioLimit(user.tier);
-        const audioCount = await Song.countDocuments({ userId: currentSong.userId, audioUrl: { $ne: null } });
-
-        if (audioCount >= limit) {
-          return res.status(403).json({
-            message: `Audio generation limit reached (${limit} song${limit > 1 ? 's' : ''} max for ${user.tier} tier).`,
-            limit,
-            current: audioCount,
-            tier: user.tier
-          });
-        }
-      }
+    // Verify ownership
+    if (song.userId !== req.user.id) {
+      return res.status(403).json({ message: 'Forbidden' });
     }
 
-    const song = await Song.findByIdAndUpdate(songId, req.body, { new: true });
-    res.json(song);
+    await Song.findByIdAndDelete(songId);
+    res.json({ message: 'Song deleted' });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
@@ -224,7 +285,7 @@ app.get('/api/songs/:userId', async (req, res) => {
 
 // Upgrade user tier
 // Update user profile (email/password)
-app.put('/api/users/:userId', async (req, res) => {
+app.put('/api/users/:userId', authenticateToken, async (req, res) => {
   try {
     const { userId } = req.params;
     const { currentPassword, newEmail, newPassword, avatarUrl } = req.body;
@@ -296,10 +357,13 @@ app.get('/api/users/:userId/public-songs', async (req, res) => {
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-app.post('/api/users/:userId/upgrade', async (req, res) => {
+app.post('/api/users/:userId/upgrade', authenticateToken, async (req, res) => {
   try {
     const { userId } = req.params;
     const { tier } = req.body;
+
+    // Verify ownership or admin (simple check: must act on own ID)
+    if (req.user.id !== userId) return res.status(403).json({ message: 'Forbidden' });
 
     // In a real app, verify payment here
     const user = await User.findByIdAndUpdate(userId, { tier }, { new: true });
@@ -332,7 +396,7 @@ app.get('/api/public/songs', async (req, res) => {
 });
 
 // Toggle Share Status
-app.put('/api/songs/:id/share', async (req, res) => {
+app.put('/api/songs/:id/share', authenticateToken, async (req, res) => {
   try {
     const { isPublic } = req.body;
     const song = await Song.findById(req.params.id);
@@ -344,7 +408,7 @@ app.put('/api/songs/:id/share', async (req, res) => {
 });
 
 // Add Comment
-app.post('/api/songs/:id/comment', async (req, res) => {
+app.post('/api/songs/:id/comment', authenticateToken, async (req, res) => {
   try {
     const { userId, username, content, parentCommentId } = req.body;
     const song = await Song.findById(req.params.id);
@@ -368,7 +432,7 @@ app.post('/api/songs/:id/comment', async (req, res) => {
 });
 
 // Delete Comment
-app.delete('/api/songs/:id/comment/:commentId', async (req, res) => {
+app.delete('/api/songs/:id/comment/:commentId', authenticateToken, async (req, res) => {
   try {
     const { userId } = req.body; // Verify ownership
     const { id, commentId } = req.params;
@@ -395,7 +459,7 @@ app.delete('/api/songs/:id/comment/:commentId', async (req, res) => {
 });
 
 // Rate Song
-app.post('/api/songs/:id/rate', async (req, res) => {
+app.post('/api/songs/:id/rate', authenticateToken, async (req, res) => {
   try {
     const { userId, score } = req.body; // score 1-5
     const song = await Song.findById(req.params.id);
@@ -420,7 +484,7 @@ app.post('/api/songs/:id/rate', async (req, res) => {
 
 
 // --- IMAGE GENERATION VIA HUGGING FACE (FREE TIER) ---
-app.post('/api/generate-cover-art', async (req, res) => {
+app.post('/api/generate-cover-art', authenticateToken, async (req, res) => {
   try {
     const { prompt } = req.body;
     const HF_API_TOKEN = process.env.HUGGINGFACE_API_TOKEN;
